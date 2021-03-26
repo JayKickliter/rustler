@@ -74,3 +74,5 @@ pub type NifResult<T> = Result<T, Error>;
 pub use rustler_codegen::{
     init, nif, NifMap, NifRecord, NifStruct, NifTuple, NifUnitEnum, NifUntaggedEnum,
 };
+
+pub mod watchdog;

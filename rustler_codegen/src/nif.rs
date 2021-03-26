@@ -10,7 +10,7 @@ pub fn transcoder_decorator(args: syn::AttributeArgs, fun: syn::ItemFn) -> Token
 
     validate_attributes(args.clone());
 
-    let flags = schedule_flag(args.to_owned());
+    let (flags, is_dirty) = schedule_flag(args.to_owned());
     let function = fun.to_owned().into_token_stream();
     let arity = arity(inputs.clone());
     let decoded_terms = extract_inputs(inputs.clone());
@@ -18,6 +18,14 @@ pub fn transcoder_decorator(args: syn::AttributeArgs, fun: syn::ItemFn) -> Token
     let erl_func_name = extract_attr_value(args, "name")
         .map(|ref n| syn::Ident::new(n, Span::call_site()))
         .unwrap_or_else(|| name.clone());
+    let watchdog = if is_dirty {
+        quote!()
+    } else {
+        quote! {
+            #[cfg(feature = "watchdog")]
+            let _watchdog = rustler::watchdog::Watchdog::new(stringify!(#erl_func_name), #arity);
+        }
+    };
 
     quote! {
         #[allow(non_camel_case_types)]
@@ -37,6 +45,7 @@ pub fn transcoder_decorator(args: syn::AttributeArgs, fun: syn::ItemFn) -> Token
                     argc: rustler::codegen_runtime::c_int,
                     argv: *const rustler::codegen_runtime::NIF_TERM
                 ) -> rustler::codegen_runtime::NIF_TERM {
+                    #watchdog
                     let lifetime = ();
                     let env = rustler::Env::new(&lifetime, nif_env);
 
@@ -71,14 +80,18 @@ pub fn transcoder_decorator(args: syn::AttributeArgs, fun: syn::ItemFn) -> Token
     }
 }
 
-fn schedule_flag(args: syn::AttributeArgs) -> TokenStream {
+fn schedule_flag(args: syn::AttributeArgs) -> (TokenStream, bool) {
     let mut tokens = TokenStream::new();
 
     let valid = ["DirtyCpu", "DirtyIo", "Normal"];
+    let mut is_dirty = false;
 
     let flag = match extract_attr_value(args, "schedule") {
         Some(value) => {
             if valid.contains(&value.as_str()) {
+                if value == "DirtyCpu" || value == "DirtyIo" {
+                    is_dirty = true;
+                }
                 syn::Ident::new(value.as_str(), Span::call_site())
             } else {
                 panic!("Invalid schedule option `{}`", value);
@@ -88,7 +101,7 @@ fn schedule_flag(args: syn::AttributeArgs) -> TokenStream {
     };
 
     tokens.extend(quote! { rustler::SchedulerFlags::#flag });
-    tokens
+    (tokens, is_dirty)
 }
 
 fn extract_attr_value(args: syn::AttributeArgs, name: &str) -> Option<String> {
